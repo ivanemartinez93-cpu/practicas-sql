@@ -26,16 +26,20 @@ GO
 
 -- ── SECCIÓN 2: DDL — DEFINICIÓN DEL ESQUEMA ───────────
 
--- DROP elimina las tablas si existen.
--- Se borran primero las que tienen FK para respetar dependencias.
+-- Borro primero las tablas que dependen de otras para evitar
+-- problemas con las relaciones entre ellas.
+
 DROP TABLE IF EXISTS dbo.ventas;
 DROP TABLE IF EXISTS dbo.productos;
 DROP TABLE IF EXISTS dbo.clientes;
 DROP TABLE IF EXISTS dbo.categorias;
+DROP TABLE IF EXISTS dbo.territorios;
 GO
 
 
--- Categorías se crea primero porque productos dependerá de ella.
+-- Creo las categorías que después voy a usar
+-- para clasificar los productos.
+
 CREATE TABLE dbo.categorias (
     id_categoria INT PRIMARY KEY,
     nombre_categoria VARCHAR(50) NOT NULL,
@@ -44,18 +48,38 @@ CREATE TABLE dbo.categorias (
 GO
 
 
--- Clientes se crea antes que ventas porque será referenciada por una FK.
+-- Creo los territorios para poder identificar
+-- la región a la que pertenece cada cliente.
+
+CREATE TABLE dbo.territorios (
+    id_territorio INT PRIMARY KEY,
+    region VARCHAR(50) NOT NULL
+);
+GO
+
+
+-- En clientes guardo también el segmento y el territorio
+-- para después poder analizar las ventas por tipo de cliente y región.
+
 CREATE TABLE dbo.clientes (
     id_cliente INT PRIMARY KEY,
     nombre VARCHAR(100) NOT NULL,
     email VARCHAR(100) UNIQUE,
     ciudad VARCHAR(50),
-    fecha_registro DATE NOT NULL
+    segmento VARCHAR(50) NOT NULL,
+    id_territorio INT NOT NULL,
+    fecha_registro DATE NOT NULL,
+
+    CONSTRAINT FK_clientes_territorios
+        FOREIGN KEY (id_territorio)
+        REFERENCES dbo.territorios(id_territorio)
 );
 GO
 
 
--- Productos se relaciona con categorías mediante id_categoria.
+-- Cada producto queda relacionado con una categoría.
+-- También guardo su precio, stock y si está activo.
+
 CREATE TABLE dbo.productos (
     id_producto INT PRIMARY KEY,
     nombre_producto VARCHAR(100) NOT NULL,
@@ -71,7 +95,10 @@ CREATE TABLE dbo.productos (
 GO
 
 
--- Ventas es la tabla central y relaciona clientes con productos.
+-- Ventas relaciona al cliente con el producto que compró.
+-- También guardo el canal porque en M5 voy a comparar
+-- las operaciones Online y Presencial.
+
 CREATE TABLE dbo.ventas (
     id_venta INT PRIMARY KEY,
     id_cliente INT NOT NULL,
@@ -79,6 +106,7 @@ CREATE TABLE dbo.ventas (
     cantidad INT NOT NULL,
     precio_unitario DECIMAL(10, 2) NOT NULL,
     fecha_venta DATE NOT NULL,
+    canal VARCHAR(20) NOT NULL,
 
     CONSTRAINT FK_ventas_clientes
         FOREIGN KEY (id_cliente)
@@ -90,41 +118,67 @@ CREATE TABLE dbo.ventas (
 );
 GO
 
-
 -- ── SECCIÓN 3: DML — CARGA INICIAL DE DATOS ───────────
 
--- Se cargan primero las categorías porque productos depende de ellas.
+-- Cargo primero las categorías porque los productos
+-- necesitan tener una categoría asignada.
+
 INSERT INTO dbo.categorias (
     id_categoria,
     nombre_categoria,
     descripcion
 )
 VALUES
-    (1, 'Computación', 'Laptops, PCs y monitores'),
-    (2, 'Accesorios', 'Periféricos y complementos'),
-    (3, 'Audio', 'Auriculares y parlantes'),
+    (1, 'Computación',    'Laptops, PCs y monitores'),
+    (2, 'Accesorios',     'Periféricos y complementos'),
+    (3, 'Audio',          'Auriculares y parlantes'),
     (4, 'Almacenamiento', 'Discos y memorias');
 GO
 
 
--- Los clientes deben existir antes de registrar sus ventas.
+-- Defino algunas regiones para después poder analizar
+-- de dónde provienen los clientes y sus ventas.
+
+INSERT INTO dbo.territorios (
+    id_territorio,
+    region
+)
+VALUES
+    (1, 'AMBA'),
+    (2, 'Centro'),
+    (3, 'Cuyo'),
+    (4, 'Norte');
+GO
+
+
+-- Cargo los clientes indicando su segmento y la región
+-- a la que pertenecen.
+-- Dejo un cliente sin compras para poder detectarlo
+-- después con LEFT JOIN en el Módulo 5.
+
 INSERT INTO dbo.clientes (
     id_cliente,
     nombre,
     email,
     ciudad,
+    segmento,
+    id_territorio,
     fecha_registro
 )
 VALUES
-    (1, 'María López',  'maria@mail.com',  'Buenos Aires', '2024-01-05'),
-    (2, 'Carlos Ruiz',  'carlos@mail.com', 'Córdoba',       '2024-01-10'),
-    (3, 'Ana Gómez',    'ana@mail.com',    'Rosario',       '2024-02-01'),
-    (4, 'Pedro Sanz',   'pedro@mail.com',  'Mendoza',       '2024-02-15'),
-    (5, 'Laura Torres', 'laura@mail.com',  'Tucumán',       '2024-03-01');
+    (1, 'María López',    'maria@mail.com',  'Buenos Aires', 'Premium',     1, '2024-01-05'),
+    (2, 'Carlos Ruiz',    'carlos@mail.com', 'Córdoba',      'Regular',     2, '2024-01-10'),
+    (3, 'Ana Gómez',      'ana@mail.com',    'Rosario',      'Premium',     2, '2024-02-01'),
+    (4, 'Pedro Sanz',     'pedro@mail.com',  'Mendoza',      'Corporativo', 3, '2024-02-15'),
+    (5, 'Laura Torres',   'laura@mail.com',  'Tucumán',      'Regular',     4, '2024-03-01'),
+    (6, 'Sofía Herrera',  'sofia@mail.com',  'Buenos Aires', 'Regular',     1, '2024-03-20');
 GO
 
 
--- Cada producto utiliza una categoría previamente cargada.
+-- Cada producto queda relacionado con una categoría.
+-- También dejo un producto sin ventas para identificarlo
+-- después en la consulta de productos sin movimiento.
+
 INSERT INTO dbo.productos (
     id_producto,
     nombre_producto,
@@ -139,56 +193,64 @@ VALUES
     (3, 'Monitor 4K 27"',     1,  450.00, 12, 1),
     (4, 'Auriculares BT Pro', 3,  120.00, 35, 1),
     (5, 'SSD Externo 1TB',    4,  130.00, 18, 1),
-    (6, 'Teclado Mecánico',   2,   95.00, 40, 1);
+    (6, 'Teclado Mecánico',   2,   95.00, 40, 1),
+    (7, 'Webcam Full HD',     2,   75.00, 25, 1);
 GO
 
 
--- Ventas se carga al final porque necesita clientes y productos existentes.
+-- Cargo las ventas al final porque primero tienen que existir
+-- los clientes y los productos.
+-- También indico si cada operación fue Online o Presencial.
+
 INSERT INTO dbo.ventas (
     id_venta,
     id_cliente,
     id_producto,
     cantidad,
     precio_unitario,
-    fecha_venta
+    fecha_venta,
+    canal
 )
 VALUES
-    (1,  1, 1, 2, 1200.00, '2024-03-05'),
-    (2,  2, 2, 5,   28.00, '2024-03-06'),
-    (3,  3, 3, 1,  450.00, '2024-03-07'),
-    (4,  1, 4, 2,  120.00, '2024-03-08'),
-    (5,  4, 5, 3,  130.00, '2024-03-10'),
-    (6,  2, 6, 4,   95.00, '2024-03-11'),
-    (7,  5, 1, 1, 1200.00, '2024-03-12'),
-    (8,  3, 2, 8,   28.00, '2024-03-13'),
-    (9,  4, 4, 1,  120.00, '2024-03-14'),
-    (10, 5, 3, 2,  450.00, '2024-03-15'),
-        -- Agrego ventas de otros meses para poder comparar
-    -- los resultados mensuales en el Módulo 4.
+    -- Ventas de marzo
+    (1,  1, 1, 2, 1200.00, '2024-03-05', 'Online'),
+    (2,  2, 2, 5,   28.00, '2024-03-06', 'Presencial'),
+    (3,  3, 3, 1,  450.00, '2024-03-07', 'Online'),
+    (4,  1, 4, 2,  120.00, '2024-03-08', 'Presencial'),
+    (5,  4, 5, 3,  130.00, '2024-03-10', 'Online'),
+    (6,  2, 6, 4,   95.00, '2024-03-11', 'Presencial'),
+    (7,  5, 1, 1, 1200.00, '2024-03-12', 'Online'),
+    (8,  3, 2, 8,   28.00, '2024-03-13', 'Online'),
+    (9,  4, 4, 1,  120.00, '2024-03-14', 'Presencial'),
+    (10, 5, 3, 2,  450.00, '2024-03-15', 'Online'),
 
     -- Ventas de enero
-    (11, 1, 1, 1, 1200.00, '2024-01-10'),
-    (12, 2, 2, 5,   28.00, '2024-01-18'),
+    (11, 1, 1, 1, 1200.00, '2024-01-10', 'Presencial'),
+    (12, 2, 2, 5,   28.00, '2024-01-18', 'Online'),
 
     -- Ventas de febrero
-    (13, 3, 3, 2,  450.00, '2024-02-05'),
-    (14, 4, 5, 4,  130.00, '2024-02-14'),
-    (15, 5, 6, 3,   95.00, '2024-02-22'),
+    (13, 3, 3, 2,  450.00, '2024-02-05', 'Online'),
+    (14, 4, 5, 4,  130.00, '2024-02-14', 'Presencial'),
+    (15, 5, 6, 3,   95.00, '2024-02-22', 'Online'),
 
     -- Ventas de abril
-    (16, 1, 1, 2, 1200.00, '2024-04-03'),
-    (17, 2, 3, 2,  450.00, '2024-04-11'),
-    (18, 3, 4, 2,  120.00, '2024-04-19'),
-    (19, 4, 2, 5,   28.00, '2024-04-25');
+    (16, 1, 1, 2, 1200.00, '2024-04-03', 'Presencial'),
+    (17, 2, 3, 2,  450.00, '2024-04-11', 'Online'),
+    (18, 3, 4, 2,  120.00, '2024-04-19', 'Presencial'),
+    (19, 4, 2, 5,   28.00, '2024-04-25', 'Online');
 GO
-
 
 -- ── SECCIÓN 4: VALIDACIÓN ──────────────────────────────
 
--- SELECT * muestra todas las columnas y registros de cada tabla.
+-- Uso SELECT * solamente acá para revisar que las tablas
+-- se hayan creado y cargado correctamente.
+-- Para un análisis real conviene elegir solo las columnas necesarias.
+
 SELECT * FROM dbo.categorias;
+SELECT * FROM dbo.territorios;
 SELECT * FROM dbo.clientes;
 SELECT * FROM dbo.productos;
 SELECT * FROM dbo.ventas;
+GO
 
 
